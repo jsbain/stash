@@ -35,7 +35,7 @@ import editor #for reloading current file
 GITTLE_URL='https://github.com/jsbain/gittle/archive/master.zip'
 FUNKY_URL='https://github.com/FriendCode/funky/archive/master.zip'
 DULWICH_URL='https://github.com/jsbain/dulwich/archive/master.zip'
-REQUIRED_DULWICH_VERSION = (0,9,9,'jsbain_fork')
+REQUIRED_DULWICH_VERSION = (0,11,3)
 AUTODOWNLOAD_DEPENDENCIES = True 
 
 if AUTODOWNLOAD_DEPENDENCIES:
@@ -103,6 +103,9 @@ if AUTODOWNLOAD_DEPENDENCIES:
     try:
         gittle_path=os.path.join(libpath,'gittle')
         funky_path=os.path.join(libpath,'funky')
+        #i have no idea why this is getting cleared...
+        if libpath not in sys.path:
+           sys.path.insert(1,libpath)
         import gittle
         Gittle=gittle.Gittle
     except ImportError:
@@ -182,7 +185,7 @@ def _confirm_dangerous():
             force=raw_input('WARNING: there are uncommitted modified files and/or staged changes. These could be overwritten by this command. Continue anyway? [y/n] ')
             if not force=='y':
                 raise Exception('User cancelled dangerous operation')
-              
+                
 def unstage(commit='HEAD',paths=[]):
     repo=_get_repo().repo
     for somepath in paths:
@@ -232,7 +235,11 @@ def unstage_all( commit='HEAD'):
     for entry in index.iteritems():
         unstage(commit,[entry[0]])
 
-    
+def checkurl(url):
+   valid_schemes=['git','http','https']
+   if not urlparse.urlparse(url).scheme in valid_schemes:
+      raise Exception('url argument should either reference a remote name, or start with ' + 'or '.join(valid_schemes)) 
+      
 def git_init(args):
     if len(args) == 1:
         Gittle.init(args[0])
@@ -261,7 +268,8 @@ def git_remote(args):
             print key, value
     elif len(args)==2:
         repo=_get_repo()
-        checkurl(args[1])
+        url=args[1]
+        checkurl(url)
         repo.add_remote(args[0],args[1])
     else:
         print command_help['remote']
@@ -427,11 +435,7 @@ def git_commit(args):
                 pass  #todo, just no such file
     except:
         print 'commit Error: {0}'.format(sys.exc_value)
-        
-def checkurl(url):
-   valid_schemes=['git','http','https']
-   if not urlparse.urlparse(url).scheme in valid_schemes:
-      raise Exception('url argument should either reference a remote name, or start with ' + 'or '.join(valid_schemes)) 
+
     
 
 def git_clone(args):
@@ -452,7 +456,7 @@ def git_pull(args):
         repo = _get_repo()
         _confirm_dangerous()
         url = args[0] if len(args)==1 else repo.remotes.get('origin','')
-
+        
         if url in repo.remotes:
             origin=url
             url=repo.remotes.get(origin)
@@ -481,8 +485,9 @@ def git_fetch(args):
         origin=result.url
         result.url=repo.remotes.get(origin)
     checkurl(result.url)
+    print 'Starting fetch, this could take a while'
     remote_refs=porcelain.fetch(repo.repo.path,result.url)
-
+    print 'Fetch successful.  Importing refs'
     remote_tags = gittle.utils.git.subrefs(remote_refs, 'refs/tags')
     remote_heads = gittle.utils.git.subrefs(remote_refs, 'refs/heads')
         
@@ -507,11 +512,13 @@ def git_fetch(args):
     )
     for k,v in clean_remote_tags.items():
         print 'imported {}/{} {}'.format('refs/tags',k,v) 
+    print 'Checking for deleted remote refs'
     #delete unused remote refs
     for k in gittle.utils.git.subrefs(repo.refs,heads_base):
-        if k not in gittle.utils.git.subrefs(clean_remote_heads,origin):
+        if k not in clean_remote_heads:
+            print 'Deleting {}'.format('/'.join([heads_base,k]))
             del repo.refs['/'.join([heads_base,k])]
-    
+    print 'Fetch complete'
 
 def git_push(args):
     parser = argparse.ArgumentParser(prog='git push'
@@ -600,7 +607,7 @@ def git_log(args):
 
     try:
         repo = _get_repo()
-        porcelain.log(repo.repo.path, max_entries=results.max_entries,format=results.format,outstream=results.output)
+        porcelain.log(repo.repo.path, max_entries=results.max_entries,outstream=results.output)
     except ValueError:
         print command_help['log']
 
