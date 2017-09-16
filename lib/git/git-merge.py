@@ -169,22 +169,26 @@ def merge(args):
     if result.abort:
         print 'attempting to undo merge.  beware, files in working tree are not touched.  \nused git reset --hard to revert particular files'
         git_reset([])
-        os.remove(os.path.join(repo.repo.controldir(),'MERGE_HEAD'))
-        os.remove(os.path.join(repo.repo.controldir(),'MERGE_MSG'))
+        os.remove(os.path.join(repo.controldir(),'MERGE_HEAD'))
+        os.remove(os.path.join(repo.controldir(),'MERGE_MSG'))
 
     #todo: check for uncommitted changes and confirm
     
     # first, determine merge head
-    merge_head = find_revision_sha(repo,result.commit or get_remote_tracking_branch(repo,repo.active_branch))
+    try:
+        active_branch=repo.refs.follow('HEAD')[0][1]
+    except:
+        raise GitError('No active branch. Use checkout or reset.')
+    merge_head = find_revision_sha(repo,result.commit or get_remote_tracking_branch(repo,active_branch))
     if not merge_head:
         raise GitError('must specify a commit sha, branch, remote tracking branch to merge from.  or, need to set-upstream branch using git branch --set-upstream <remote>[/<branch>]')
 
-    head=find_revision_sha(repo,repo.active_branch)
+    head=find_revision_sha(repo,active_branch)
 
     base_sha=merge_base(repo,head,merge_head)[0]  #fixme, what if multiple bases
 
     if base_sha==head:
-        print 'Fast forwarding {} to {}'.format(repo.active_branch,merge_head)
+        print 'Fast forwarding {} to {}'.format(active_branch,merge_head)
         repo.refs['HEAD']=merge_head
         return 
     if base_sha == merge_head:
@@ -196,15 +200,15 @@ def merge(args):
     merge_head_tree=repo[merge_head].tree
     head_tree=repo[head].tree
 
-    num_conflicts,added,removed=merge_trees(repo.repo.object_store, base_tree,head_tree,merge_head_tree)
+    num_conflicts,added,removed=merge_trees(repo.object_store, base_tree,head_tree,merge_head_tree)
     # update index
     if added: 
         porcelain.add(repo.path, added)
     if removed: 
         porcelain.rm(repo.path, removed)
 
-    repo.repo._put_named_file('MERGE_HEAD',merge_head)
-    repo.repo._put_named_file('MERGE_MSG','Merged from {}({})'.format(merge_head, result.commit))
+    repo._put_named_file('MERGE_HEAD',merge_head)
+    repo._put_named_file('MERGE_MSG','Merged from {}({})'.format(merge_head, result.commit))
     print 'Merge complete with {} conflicted files'.format(num_conflicts)
     print '''Merged files were added to the staging area, but have not yet been comitted.   
     Review changes (e.g.   git diff   or   git diff>changes.txt; edit changes.txt    ), and 

@@ -2,27 +2,17 @@ import sys,os
 import dulwich
 from dulwich import porcelain
 from dulwich.walk import Walker
-from gittle import Gittle
 
 
 class GitError(Exception):
     def __init__(self,arg):
         Exception.__init__(self,arg)
 
-def _find_repo(path):
-    subdirs = os.walk(path).next()[1]
-    if '.git' in subdirs:
-        return path
-    else:
-        parent = os.path.dirname(path)
-        if parent == path:
-            return None
-        else:
-            return _find_repo(parent)
 
 #Get the parent git repo, if there is one
-def _get_repo():
-    return Gittle(_find_repo(os.getcwd()))
+def _get_repo(path=None):
+    path=path or os.path.abspath(os.getcwd())
+    return porcelain.Repo.discover(path) 
 
 def any_one(iterable):
     it = iter(iterable)
@@ -45,18 +35,17 @@ def find_revision_sha(repo,rev):
     if rev in repo:
         return repo[rev].id
         
-    o=repo.repo.object_store
-
-    returnval = repo.refs.get(rev) or repo.tags.get(rev) or repo.branches.get(rev) or repo.remote_branches.get(rev)
-    if returnval:
-        return returnval
-    else:
-        shalist=[sha for sha in o if sha.startswith(rev) and isinstance(o[sha],dulwich.objects.Commit)]
-        if len(shalist)==1:
-            return (shalist[0])
-        elif len(shalist)>1:
-            raise GitError('SHA {} is not unique'.format(rev))
-        raise GitError('could not find rev {}'.format(rev))
+    o = repo.object_store
+    try:
+       return porcelain.parse_commit(repo,rev).id
+    except KeyError:
+       pass
+    shalist=[sha for sha in o if sha.startswith(rev) and isinstance(o[sha],dulwich.objects.Commit)]
+    if len(shalist)==1:
+        return (shalist[0])
+    elif len(shalist)>1:
+        raise GitError('SHA {} is not unique'.format(rev))
+    raise GitError('could not find rev {}'.format(rev))
         
 def merge_base(repo,rev1,rev2):
     ''''git merge-base' finds best common ancestor(s) between two commits to use
@@ -68,7 +57,7 @@ merge base for a pair of commits.'''
     sha1=find_revision_sha(repo,rev1)
     sha2=find_revision_sha(repo,rev2)
           
-    sha2_ancestors,_=repo.repo.object_store._collect_ancestors([sha2],[])
+    sha2_ancestors,_=repo.object_store._collect_ancestors([sha2],[])
     merge_bases=[]
     queue=[sha1]
     seen=[]
@@ -82,15 +71,29 @@ merge base for a pair of commits.'''
             elif repo[elt].parents:
                 queue.extend(repo[elt].parents)
     return merge_bases
-    
+def remotes(repo):
+    '''return dict of remotes in form {remote:url}'''
+    config = repo.get_config()
+    return {
+            keys[1]: values['url']
+            for keys, values in config.items()
+            if keys[0] == 'remote'
+     }
+def branches(repo,remotes=False):
+    '''return list of branches, or remotes  '''
+    with porcelain.open_repo_closing(repo) as r:
+        if remotes:
+          return r.refs.keys(base=b'refs/remotes/')
+        else:
+          return r.refs.keys(base=b"refs/heads/")
 def count_commits_between(repo,rev1,rev2):
     '''find common ancestor. then count ancestor->sha1, and ancestor->sha2 '''
     sha1=find_revision_sha(repo,rev1)
     sha2=find_revision_sha(repo,rev2)
     if sha1==sha2:
         return (0,0)
-    sha1_ahead= sum(1 for _ in Walker(repo.repo.object_store,[sha1],[sha2]))
-    sha1_behind=sum(1 for _ in Walker(repo.repo.object_store,[sha2],[sha1]))
+    sha1_ahead= sum(1 for _ in Walker(repo.object_store,[sha1],[sha2]))
+    sha1_behind=sum(1 for _ in Walker(repo.object_store,[sha2],[sha1]))
     return (sha1_ahead,sha1_behind)
     
 def is_ancestor(repo,rev1,rev2):
@@ -103,11 +106,16 @@ def can_ff(repo,oldrev,newrev):
     return merge_base(repo,oldrev,newrev)==[oldrev]
     
 def get_remote_tracking_branch(repo,branchname):
-    config = repo.repo.get_config()
+    config = repo.get_config()
     try:
+        shortbranch=branchname.split(b'refs/heads/')[-1]
         remote=config.get(('branch',branchname),'remote')
         merge=config.get(('branch',branchname),'merge')
-        remotebranch=merge.split('refs/heads/')[1]
+        remotebranch=merge.split(b'refs/heads/')[1]
         return remote+'/'+remotebranch
     except KeyError:
         return None
+        
+if __name__=='__main__':
+	repo=_get_repo()	
+	get_remote_tracking_branch(repo,'gist')

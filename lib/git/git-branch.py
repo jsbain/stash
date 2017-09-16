@@ -9,12 +9,21 @@ import sys,os
 import dulwich
 from dulwich import porcelain
 from dulwich.walk import Walker
-from gittle import Gittle
 import argparse
 
-from git.gitutils import _get_repo, find_revision_sha, is_ancestor, merge_base, can_ff, any_one, count_commits_between, get_remote_tracking_branch, GitError
-
-
+from git.gitutils import _get_repo, find_revision_sha, is_ancestor, merge_base, can_ff, any_one, count_commits_between, get_remote_tracking_branch, GitError, remotes, branches
+def _format_ref_branch(repo, branch):
+    if branch.startswith(b'refs'):
+       return branch
+    else:
+       return os.path.join(b'refs/heads',branch)
+def active_branch(repo):
+    try:
+        active_branch=repo.refs.follow('HEAD')[0][1]
+        active_branch=active_branch.split('refs/heads/')[-1]
+    except:
+        active_branch=None
+    return active_branch
 def branch(args):
     repo=_get_repo()
     
@@ -52,7 +61,7 @@ def branch(args):
     parser.add_argument('startpoint',nargs='?')
 
     
-    parser.add_argument('--edit_description',action='store',nargs='?',metavar='branchname', const=repo.active_branch)
+    parser.add_argument('--edit_description',action='store',nargs='?',metavar='branchname', const=active_branch(repo))
     
     
     result = parser.parse_args(args)
@@ -62,7 +71,7 @@ def branch(args):
     delete_branchname=result.delete or result.D
     move_branchname = result.move or result.M
     no_track=result.no_track
-    add_branchname = (result.branchname, result.startpoint or repo.active_branch)
+    add_branchname = (result.branchname, result.startpoint or active_branch(repo))
     set_upstream= result.set_upstream
 
     force = result.force or result.D or result.M
@@ -96,20 +105,19 @@ def branch(args):
         else:
             create_branch(no_track[0],no_track[1],force,True)
             
-    #print result
 def format_tracking_branch_desc(repo,branchname):
     try:
         remote=get_remote_tracking_branch(repo,branchname)
-        mysha=repo.branches[branchname]
-        theirsha=repo.remote_branches[remote]
+        mysha=porcelain.parse_commit(repo,branchname).id
+        theirsha=porcelain.parse_commit(repo,remote).id
         ahead,behind=count_commits_between(repo,mysha, theirsha)
         return '+{}/-{} relative to {} ({})'.format(ahead,behind,remote,theirsha)
     except KeyError:
         return ''
 def edit_branch_description(branchname, description=None):
     description = description or raw_input('enter description:')
-    config = _get_repo().repo.get_config()
-    if not branchname in _get_repo().branches:
+    config = _get_repo().get_config()
+    if not branchname in branches(_get_repo()):
         GitError('{} is not an existing branch'.format(branchname))
         config.set(('branch',branchname),'description',description)
         config.write_to_path()
@@ -119,23 +127,25 @@ def branch_list(result):
         N=result.abbrev
         repo = _get_repo()
         if not result.remotes:
-            for key,value in repo.branches.iteritems():
-                dispval=value[0:N]  #todo, --abbrev=n
-                commitmsg=(repo[value].message if result.verbose else '').strip()
+            for key in branches(repo):
+                sha=porcelain.parse_commit(repo,key).id
+                dispval=sha[0:N]  #todo, --abbrev=n
+                commitmsg=(repo[sha].message if result.verbose else '').strip()
                 tracking=get_remote_tracking_branch(repo,key)
                 trackmsg=''
                 diffmsg=trackingsha=''
                 if tracking:
-                    trackingsha=repo.remote_branches[tracking]
-                    ahead,behind= count_commits_between(repo,value,trackingsha)
+                    trackingsha=porcelain.parse_commit(repo, tracking).id
+                    ahead,behind= count_commits_between(repo,sha,trackingsha)
                     diffmsg='+{}/-{} compare to'.format(ahead,behind) if result.verbose else ''
                     trackmsg='[{} {} {}]'.format(diffmsg,tracking,trackingsha[0:N])
-                print (' '.join([('* ' if repo.active_branch == key else '') + key,  dispval, commitmsg]))
+                print (' '.join([('* ' if active_branch(repo) == key else '') + key,  dispval, trackmsg, commitmsg]))
         if result.remotes or result.all:
-            for key, value in repo.remote_branches.iteritems():
-                dispval=value[0:N]  #todo, --abbrev=n
-                commitmsg=(repo[value].message if result.verbose else '').strip()
-                print (' '.join([('* ' if repo.active_branch == key else '') + key,  dispval, commitmsg]))
+            for key in branches(repo,remotes=True):
+                sha=porcelain.parse_commit(repo,key).id
+                dispval=sha[0:N]  #todo, --abbrev=n
+                commitmsg=(repo[sha].message if result.verbose else '').strip()
+                print (' '.join([('* ' if active_branch(repo) == key else '') + key,  dispval, commitmsg]))
 
 def delete_branch(delete_branchname,force=False,remote=None, verbose=0):
     '''delete a branch.  
@@ -145,10 +155,10 @@ def delete_branch(delete_branchname,force=False,remote=None, verbose=0):
     print 'delete',delete_branchname,force,remote
     repo=_get_repo()
     if remote:
-        qualified_branch=repo._format_ref_remote(delete_branchname)
+        qualified_branch=_format_ref_remote(repo,delete_branchname)
     else:
-        qualified_branch=repo._format_ref_branch(delete_branchname)
-        if delete_branchname == repo.active_branch:
+        qualified_branch=_format_ref_branch(repo,delete_branchname)
+        if delete_branchname == active_branch(repo):
             GitError('Cannot delete active branch.  ')
 
 
@@ -158,14 +168,14 @@ def delete_branch(delete_branchname,force=False,remote=None, verbose=0):
         #see if local is ahead of remote
         commits_ahead=count_commits_between(repo,
                                  repo.refs[qualified_branch],
-                                 repo.remote_branches[remote_tracking_branch] 
+                                 branches(repo,remote=True)[remote_tracking_branch] 
                                  )[0]
         if commits_ahead:
             raise GitError('{0} is ahead of {1} by {2} commits.\nuse git branch -D\n'.format(delete_branchname,
                                     remote_tracking_branch,
                                     commits_ahead))
     print 'removing {} (was {})\n'.format(delete_branchname,repo.refs[qualified_branch])
-    del repo.repo.refs[qualified_branch]
+    del repo.refs[qualified_branch]
 
     if not remote:
         remove_tracking(delete_branchname)
@@ -174,25 +184,28 @@ def delete_branch(delete_branchname,force=False,remote=None, verbose=0):
 def move_branch(movebranch,force,verbose):
     '''move oldbranch (or active_branch) to newbranch. update config if needed'''
     repo=_get_repo()
-    oldbranch,newbranch=([repo.active_branch]+movebranch)[-2:]
+    oldbranch,newbranch=([active_branch(repo)]+movebranch)[-2:]
 
-    if oldbranch not in repo.branches:
+    if oldbranch not in branches(repo):
         raise GitError('{} does not exist in branches'.format(oldbranch))
-    if newbranch in repo.branches and not force:
+    if newbranch in branches(repo) and not force:
         raise GitError('{} already exists.  use -M to force overwriting'.format(newbranch))
     if newbranch != oldbranch:
-        print 'Renaming {} ({}) to {}\n'.format(oldbranch,repo.branches[oldbranch],newbranch)
-        repo.add_ref(repo._format_ref_branch(newbranch),repo._format_ref_branch(oldbranch))
-        del repo.repo.refs[repo._format_ref_branch(oldbranch)]
+        print 'Renaming {} ({}) to {}\n'.format(
+        	oldbranch,
+        	porcelain.parse_commit(repo,oldbranch).id,
+        	newbranch)
+        repo.refs.add_if_new(_format_ref_branch(repo,newbranch),porcelain.parse_commit(repo,_format_ref_branch(repo,oldbranch)).id)
+        del repo.refs[_format_ref_branch(repo,oldbranch)]
         #todo: reflog
-    if oldbranch == repo.active_branch:
-        repo.active_branch=newbranch
+    if oldbranch == active_branch(repo):
+        repo.refs.set_symbolic_ref(b'HEAD',newbranch)
 
         
 def remove_tracking(branchname):
     '''remove branch entry from config'''
     # Get repo's config
-    config = _get_repo().repo.get_config()
+    config = _get_repo().get_config()
     try:
         del config[('branch', branchname)]['remote']
         del config[('branch', branchname)]['merge']
@@ -207,7 +220,7 @@ def remove_tracking(branchname):
         
 def add_tracking(branchname, remote, remotebranch):
         # Get repo's config
-        config = _get_repo().repo.get_config()
+        config = _get_repo().get_config()
 
         # Add new entries for remote
         config.set(('branch', branchname), 'remote', remote)
@@ -224,19 +237,19 @@ def create_branch(new_branch, base_rev, force=False ,no_track=False  ):
         repo=_get_repo()
         
         # Already exists
-        if new_branch in repo.branches:
+        if new_branch in branches(repo):
             if not force:
                 raise GitError("branch %s already exists\n use --force to overwrite anyway" % new_branch)
        
          # fork with new sha
-        new_ref = repo._format_ref_branch(new_branch)
+        new_ref = _format_ref_branch(repo,new_branch)
         base_sha=find_revision_sha(repo,base_rev)
-        repo.repo.refs[new_ref] = base_sha
+        repo.refs[new_ref] = base_sha
         
         #handle tracking, only if this was a remote
         tracking,remote_branch =( ['origin']+base_rev.split('/'))[-2:]  #branch-> origin/branch.  remote/branch stays as is
         qualified_remote_branch=os.path.sep.join([tracking,remote_branch])
-        if qualified_remote_branch in repo.remote_branches and not base_rev in repo.branches:
+        if qualified_remote_branch in branches(repo,remotes=True) and not base_rev in branches(repo):
             if not no_track:
                 add_tracking(new_branch,tracking,remote_branch)
             else:
