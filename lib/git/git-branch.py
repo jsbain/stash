@@ -152,7 +152,6 @@ def delete_branch(delete_branchname,force=False,remote=None, verbose=0):
     if remote=True, then look in refs/remotes, otherwise check refs/heads
     for local, check if it has a remote tracking branch, and only allow delete if upstream has merged
     '''
-    print 'delete',delete_branchname,force,remote
     repo=_get_repo()
     if remote:
         qualified_branch=_format_ref_remote(repo,delete_branchname)
@@ -161,15 +160,13 @@ def delete_branch(delete_branchname,force=False,remote=None, verbose=0):
         if delete_branchname == active_branch(repo):
             GitError('Cannot delete active branch.  ')
 
-
     remote_tracking_branch=get_remote_tracking_branch(repo,delete_branchname)
 
     if remote_tracking_branch and not force:
         #see if local is ahead of remote
         commits_ahead=count_commits_between(repo,
                                  repo.refs[qualified_branch],
-                                 branches(repo,remote=True)[remote_tracking_branch] 
-                                 )[0]
+                                 remote_tracking_branch)[0]
         if commits_ahead:
             raise GitError('{0} is ahead of {1} by {2} commits.\nuse git branch -D\n'.format(delete_branchname,
                                     remote_tracking_branch,
@@ -196,10 +193,15 @@ def move_branch(movebranch,force,verbose):
         	porcelain.parse_commit(repo,oldbranch).id,
         	newbranch)
         repo.refs.add_if_new(_format_ref_branch(repo,newbranch),porcelain.parse_commit(repo,_format_ref_branch(repo,oldbranch)).id)
+        old_tracking_branch=get_remote_tracking_branch(repo,oldbranch)
+        if old_tracking_branch:
+            add_tracking(newbranch,*old_tracking_branch.split('/'))
+        remove_tracking(oldbranch)
         del repo.refs[_format_ref_branch(repo,oldbranch)]
         #todo: reflog
     if oldbranch == active_branch(repo):
-        repo.refs.set_symbolic_ref(b'HEAD',newbranch)
+        repo.refs.set_symbolic_ref(b'HEAD',
+                                   porcelain.parse_ref(repo,newbranch))
 
         
 def remove_tracking(branchname):

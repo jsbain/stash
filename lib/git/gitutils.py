@@ -8,7 +8,6 @@ class GitError(Exception):
     def __init__(self,arg):
         Exception.__init__(self,arg)
 
-
 #Get the parent git repo, if there is one
 def _get_repo(path=None):
     path=path or os.path.abspath(os.getcwd())

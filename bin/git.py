@@ -19,6 +19,7 @@ Commands:
     status: git status - show status of files (staged unstaged untracked)
     reset: git reset - reset a repo to its pre-change state
     diff: git diff - show changes in staging area
+    ls_remote: git ls_remote - list refs in remote repository
     help: git help
 '''
 from __future__ import print_function
@@ -98,6 +99,7 @@ command_help={    'init':  'initialize a new Git repository'
     ,'status': 'git status - show status of files (staged unstaged untracked)'
     ,'reset': 'git reset [<commit>] <paths>  reset <paths> in staging area back to their state at <commit>.  this does not affect files in the working area.  \ngit reset [ --mixed | --hard ] [<commit>] reset a repo to its pre-change state. default resets index, but not working tree.  i.e unstages all files.   --hard is dangerous, overwriting index and working tree to <commit>'
     , 'diff': 'git diff  show changed files in staging area'
+    , 'ls_remote': 'git ls_remote - list refs in remote repository'
     ,'help': 'git help'
           }
 		
@@ -141,7 +143,7 @@ def unstage(commit='HEAD',paths=[]):
             if os.path.exists(full_path):
                 index_entry=list(index_entry_from_stat(posix.lstat(full_path),tree_entry[1]  ,0    ))
             else:
-                index_entry=[[0]*11,tree_entry[1],0]
+                index_entry=[0]*8+[tree_entry[1],0]
                 
         #update index entry stats to reflect commit
         index_entry[4]=tree_entry[0] #mode
@@ -179,8 +181,8 @@ def git_status(args):
             if v:
                 print (k,v)
         print ('UNSTAGED LOCAL MODS')
-        print (status.unstaged)
-        
+        for k in status.unstaged:
+            print(k)
     else:
         print (command_help['status'])
 
@@ -293,9 +295,9 @@ def git_reset(args):
     ap.add_argument('commit',nargs='?',action='store',default=b'HEAD')
     ap.add_argument('paths',nargs='*')
     mode=ap.add_mutually_exclusive_group()
-    mode.add_argument('--hard',action='store_true')
-    mode.add_argument('--mixed',action='store_true')
-    mode.add_argument('--soft',action='store_true')
+    mode.add_argument('--hard',help='Reset index and working directory', action='store_true')
+    mode.add_argument('--mixed',help='Reset index only', action='store_true')
+    mode.add_argument('--soft',help='Only reset branch head, but leave index and working copy', action='store_true')
  
     ap.add_argument('--merge',action='store_true')
     ns=ap.parse_args(args)
@@ -492,7 +494,25 @@ def git_fetch(args):
             del repo.refs['/'.join([heads_base,k])]
             #todo: remove any tracking branch references
     print('Fetch complete')
-
+def git_ls_remote(args):
+    ''' Get list of remote refs, but do not fetch'''
+    parser=argparse.ArgumentParser(prog='git ls_remote',
+													usage='git ls_remote [url or remote name]')
+    parser.add_argument('url',type=str, nargs='?', help='Remote repository name')
+    result = parser.parse_args(args)
+    repo = _get_repo()
+    origin=b'origin'
+    if not result.url:
+        result.url = remotes(repo).get(b'origin',b'')
+    if result.url in remotes(repo):
+        origin=result.url
+        result.url=remotes(repo).get(origin)
+    result.url=fix_url(result.url)
+    remote_ls=porcelain.ls_remote(result.url)
+    if remote_ls:
+       for k,v in remote_ls.items():
+          print('{}:{}',k,v)
+    
 def git_push(args):
     '''push using porcelain.push.
     TODO: use ls_remote to get updated list of remote refs'''
@@ -725,6 +745,7 @@ commands = {
     ,'status': git_status
     ,'diff': git_diff
     ,'help': git_help
+    ,'ls_remote':git_ls_remote
     }
 if __name__=='__main__':
     if len(sys.argv)==1:
